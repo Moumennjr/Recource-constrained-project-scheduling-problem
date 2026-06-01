@@ -1,50 +1,49 @@
 """
-Gantt schedule serializer.
-Converts solver output into a list of bar records ready for Recharts.
+Gantt schedule serializer — dynamic, works with any ProblemConfig.
 """
 
-from data.problem_data import (
-    PIPES, TACHES, N_ZONES,
-    DUR, DUR_FINAL, NOM_TACHE, NOM_PIPE,
-    ALPHA,
-)
-
-# Fixed inter-zone gap imposed between zones on the same pipeline
-INTER_ZONE_LAG = 76  # hours
+INTER_ZONE_LAG = 76  # hours between zones (fixed pipeline coupling lag)
 
 
-def build_gantt(starts: dict, modes: dict, n_zones: int = N_ZONES) -> list:
+def build_gantt(cfg: dict, starts: dict, modes: dict) -> list:
     """
-    Build a flat list of Gantt bar records for the frontend.
+    Build flat Gantt bar records from a solved schedule.
 
-    Each record:
-      { task_id, task_name, pipe, pipe_name, zone,
-        start, duration, end, reinforced }
-
-    'start' and 'end' are absolute project hours assuming zones run sequentially:
-      zone_offset(z) = (z - 1) * cmax_zone
-    We derive cmax_zone from the schedule itself.
+    Returns list of dicts:
+      { task_id, task_name, pipe, pipe_name, zone, start, duration, end, reinforced }
+    All times are absolute project hours.
     """
-    # Derive cmax_zone from starts: latest start + duration on pipe 3
+    PIPES      = cfg["PIPES"]
+    TACHES     = cfg["TACHES"]
+    N_ZONES    = cfg["N_ZONES"]
+    DUR        = cfg["DUR"]
+    DUR_FINAL  = cfg["DUR_FINAL"]
+    ALPHA      = cfg["ALPHA"]
+    NOM_TACHE  = cfg["NOM_TACHE"]
+    NOM_PIPE   = cfg["NOM_PIPE"]
+
+    # Derive cmax_zone from schedule
+    last_task = TACHES[-1]
+    last_pipe = PIPES[-1]
     cmax_zone = max(
-        starts[i][3] + DUR[i][3] * (ALPHA[i] if modes[i][3] == 1 else 1)
-        for i in TACHES
+        starts[i][j] + DUR[i][j] * (ALPHA[i] if modes[i][j] == 1 else 1)
+        for i in TACHES for j in PIPES
     )
 
     bars = []
 
-    for zone in range(1, n_zones + 1):
+    for zone in range(1, N_ZONES + 1):
         zone_offset = (zone - 1) * (cmax_zone + INTER_ZONE_LAG)
 
         for i in TACHES:
             for j in PIPES:
-                s = starts[i][j]
-                dur = DUR[i][j] * (ALPHA[i] if modes[i][j] == 1 else 1)
+                s   = starts[i][j]
+                dur = DUR[i][j] * (ALPHA[i] if modes[i][j] == 1 else 1.0)
                 bars.append({
                     "task_id":    i,
-                    "task_name":  NOM_TACHE[i],
+                    "task_name":  NOM_TACHE.get(i, f"Task {i}"),
                     "pipe":       j,
-                    "pipe_name":  NOM_PIPE[j],
+                    "pipe_name":  NOM_PIPE.get(j, f"Pipe {j}"),
                     "zone":       zone,
                     "start":      round(zone_offset + s, 1),
                     "duration":   round(dur, 1),
@@ -52,36 +51,32 @@ def build_gantt(starts: dict, modes: dict, n_zones: int = N_ZONES) -> list:
                     "reinforced": modes[i][j] == 1,
                 })
 
-    # Append final tasks (sequential, after all zones)
-    project_end_zones = n_zones * (cmax_zone + INTER_ZONE_LAG) - INTER_ZONE_LAG
-    cursor = project_end_zones
+    # Final sequential tasks — appended after all zones
+    project_zone_end = N_ZONES * cmax_zone + (N_ZONES - 1) * INTER_ZONE_LAG
+    cursor = project_zone_end
 
-    final_tasks = [
-        {"task_id": 12, "task_name": "Raccordement",       "duration": DUR_FINAL[12]},
-        {"task_id": 13, "task_name": "Test hydrostatique",  "duration": DUR_FINAL[13]},
-    ]
-    for ft in final_tasks:
+    for task_id, duration in cfg["DUR_FINAL"].items():
+        task_name = cfg["NOM_TACHE"].get(task_id, f"Task {task_id}")
         bars.append({
-            "task_id":   ft["task_id"],
-            "task_name": ft["task_name"],
-            "pipe":      None,
-            "pipe_name": "—",
-            "zone":      None,
-            "start":     round(cursor, 1),
-            "duration":  ft["duration"],
-            "end":       round(cursor + ft["duration"], 1),
+            "task_id":    task_id,
+            "task_name":  task_name,
+            "pipe":       None,
+            "pipe_name":  "—",
+            "zone":       None,
+            "start":      round(cursor, 1),
+            "duration":   round(duration, 1),
+            "end":        round(cursor + duration, 1),
             "reinforced": False,
         })
-        cursor += ft["duration"]
+        cursor += duration
 
     return bars
 
 
 def build_gantt_summary(bars: list) -> dict:
-    """Return high-level metrics from the Gantt bar list."""
     ends = [b["end"] for b in bars]
     return {
-        "total_hours":  round(max(ends), 1),
-        "total_days":   round(max(ends) / 24, 1),
-        "total_bars":   len(bars),
+        "total_hours": round(max(ends), 1),
+        "total_days":  round(max(ends) / 24, 1),
+        "total_bars":  len(bars),
     }

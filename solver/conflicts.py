@@ -1,16 +1,19 @@
 """
-Resource conflict detection.
-Determines which task pairs cannot overlap due to resource capacity limits.
-Returns: dict { resource_name: [(task_waiting, task_blocking), ...] }
+Resource conflict detection — fully dynamic, accepts any RESSOURCES dict.
+No longer imports from problem_data.py.
 """
 
-from data.problem_data import RESSOURCES, NOM_TACHE
 
+def detect_conflicts(ressources: dict) -> dict:
+    """
+    Given a RESSOURCES dict (solver format), returns:
+      { resource_name: [(task_waiting, task_blocking), ...] }
 
-def detect_conflicts() -> dict:
+    Algorithm: sort tasks by index, accumulate consumption, flag overflow pairs.
+    """
     conflicts = {}
 
-    for resource_name, resource_data in RESSOURCES.items():
+    for resource_name, resource_data in ressources.items():
         sorted_tasks = sorted(resource_data["taches"], key=lambda x: x[0])
         capacity = resource_data["capacite"]
 
@@ -21,9 +24,8 @@ def detect_conflicts() -> dict:
         for (task_index, unit_consumption) in sorted_tasks:
             if cumul + unit_consumption > capacity:
                 if current_group:
-                    blocking_task = max(current_group, key=lambda x: x[0])
-                    resource_conflicts.append((task_index, blocking_task[0]))
-
+                    blocking = max(current_group, key=lambda x: x[0])
+                    resource_conflicts.append((task_index, blocking[0]))
                 current_group = [(task_index, unit_consumption)]
                 cumul = unit_consumption
             else:
@@ -36,25 +38,26 @@ def detect_conflicts() -> dict:
     return conflicts
 
 
-def get_conflicts_summary() -> list:
-    """Return a serializable list of conflict records for the API."""
-    conflicts = detect_conflicts()
+def get_conflicts_summary(cfg: dict, task_names: dict) -> list:
+    """
+    Return a JSON-serializable list of conflict records.
+    cfg      — solver-format dict (from ProblemConfig.to_solver_format())
+    task_names — {int: str} mapping
+    """
+    ressources = cfg["RESSOURCES"]
+    conflicts = detect_conflicts(ressources)
     result = []
 
     for resource_name, conflict_list in conflicts.items():
-        resource_data = RESSOURCES[resource_name]
+        capacity = ressources[resource_name]["capacite"]
         for (task_waiting, task_blocking) in conflict_list:
             result.append({
-                "resource":      resource_name,
-                "capacity":      resource_data["capacite"],
-                "task_waiting":  task_waiting,
-                "task_blocking": task_blocking,
-                "task_waiting_name":  NOM_TACHE[task_waiting],
-                "task_blocking_name": NOM_TACHE[task_blocking],
+                "resource":           resource_name,
+                "capacity":           capacity,
+                "task_waiting":       task_waiting,
+                "task_blocking":      task_blocking,
+                "task_waiting_name":  task_names.get(task_waiting, str(task_waiting)),
+                "task_blocking_name": task_names.get(task_blocking, str(task_blocking)),
             })
 
     return result
-
-
-# Pre-compute once at import time — used by the MILP model
-CONFLITS = detect_conflicts()
