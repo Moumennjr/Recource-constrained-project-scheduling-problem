@@ -154,8 +154,9 @@ def solve(req: SolveRequest):
 
     if pulp.LpStatus[model.status] != "Optimal":
         raise HTTPException(422, "Solver found no optimal solution.")
-
+    
     solution   = extract_solution(cfg, d, y, Cmax, req.objective)
+    print("the solution is: ", solution)
     gantt_bars = build_gantt(cfg, solution["starts"], solution["modes"])
 
     return {

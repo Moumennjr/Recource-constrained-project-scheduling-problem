@@ -69,7 +69,19 @@ def solve_pareto(cfg: dict, n_points: int = 12) -> dict:
         cmax_zone  = pulp.value(Cmax)
         cmax_total = cmax_zone * N_ZONES + final_dur
         cost       = pulp.value(total_cost_expr)
-        n_renf     = sum(read_binary(y[i][j]) for i in TACHES for j in PIPES)
+        modes      = {i: {j: read_binary(y[i][j]) for j in PIPES} for i in TACHES}
+        n_renf     = sum(modes[i][j] for i in TACHES for j in PIPES)
+        NOM_TACHE  = cfg.get("NOM_TACHE", {})
+        NOM_PIPE   = cfg.get("NOM_PIPE", {})
+        reinforced_tasks = [
+            {
+                "task_id":   i,
+                "task_name": NOM_TACHE.get(i, f"Tache {i}"),
+                "pipes":     [NOM_PIPE.get(j, f"Pipe {j}") for j in PIPES if modes[i][j] == 1],
+            }
+            for i in TACHES
+            if any(modes[i][j] == 1 for j in PIPES)
+        ]
 
         pareto_points.append({
             "epsilon":          round(eps, 1),
@@ -78,6 +90,7 @@ def solve_pareto(cfg: dict, n_points: int = 12) -> dict:
             "cmax_total_days":  round(cmax_total / 24, 1),
             "total_cost_da":    round(cost),
             "reinforced_count": n_renf,
+            "reinforced_tasks": reinforced_tasks,
         })
 
     return {

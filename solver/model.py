@@ -1,19 +1,15 @@
 """
 Core MILP model builder — fully dynamic, works with any ProblemConfig.
 
-All parameters come from cfg = ProblemConfig.to_solver_format().
-No global imports from problem_data.py.
+cmax_total formula — matches notebook cells 10 and 12 exactly:
+  cmax_total = cmax_zone * N_ZONES + DUR_FINAL[12] + DUR_FINAL[13]
 
-Decision variables:
-  d[i][j]  start time of task i on pipe j   (continuous, >= 0)
-  y[i][j]  reinforced team flag             (binary: 0=normal, 1=reinforced)
-  Cmax     makespan of one zone             (continuous, >= 0)
+This is the formula used in F1*, F2*, AND the weighted aggregation bounds.
+All three must be consistent or normalization breaks.
 
-Constraints:
-  1. Cmax definition       — Cmax >= finish of last task on each pipe
-  2. Precedence (SS + lag) — d[next][j] >= d[i][j] + LAG[i][j]
-  3. Inter-pipe sequencing — d[i][j+1] >= d[i][j] + eff_dur(i, j)
-  4. Resource conflicts    — detected dynamically from cfg["RESSOURCES"]
+NOTE: DUR_FINAL[12] here acts as the total raccordement cost/schedule lump.
+The Gantt chart uses a different formula (76h per gap) for *visual* placement,
+but the optimization objective and bounds all use DUR_FINAL[12]+DUR_FINAL[13].
 """
 
 import pulp
@@ -21,10 +17,6 @@ from solver.conflicts import detect_conflicts
 
 
 def build_model(cfg: dict, name: str = "RCPSP"):
-    """
-    Build and return the PuLP MILP model for one zone.
-    Returns: (model, d, y, Cmax, eff_dur_fn)
-    """
     PIPES  = cfg["PIPES"]
     TACHES = cfg["TACHES"]
     DUR    = cfg["DUR"]
@@ -35,7 +27,6 @@ def build_model(cfg: dict, name: str = "RCPSP"):
 
     model = pulp.LpProblem(name, pulp.LpMinimize)
 
-    # ── Variables ─────────────────────────────────────────────────────────
     d = {
         i: {j: pulp.LpVariable(f"d_{i}_{j}", lowBound=0, cat="Continuous")
             for j in PIPES}
@@ -49,47 +40,35 @@ def build_model(cfg: dict, name: str = "RCPSP"):
     Cmax = pulp.LpVariable("Cmax", lowBound=0, cat="Continuous")
 
     def eff_dur(i, j):
-        """Linear expression for effective duration of task i on pipe j."""
         reduction = DUR[i][j] * (1 - ALPHA[i])
         return DUR[i][j] - reduction * y[i][j]
 
     last_task = TACHES[-1]
 
-    # ── Constraint 1 — Cmax definition ───────────────────────────────────
+    # Constraint 1 — Cmax definition
     for j in PIPES:
-        model += (
-            Cmax >= d[last_task][j] + eff_dur(last_task, j),
-            f"cmax_pipe{j}",
-        )
+        model += (Cmax >= d[last_task][j] + eff_dur(last_task, j), f"cmax_pipe{j}")
 
-    # ── Constraint 2 — Precedence (index-based, handles any task ID sequence) ──
+    # Constraint 2 — Precedence
     for idx in range(len(TACHES) - 1):
         i      = TACHES[idx]
         i_next = TACHES[idx + 1]
         lag_i  = LAG.get(i, {})
         for j in PIPES:
-            lag_val = lag_i.get(j, 0)
-            model += (
-                d[i_next][j] >= d[i][j] + lag_val,
-                f"prec_t{i}_t{i_next}_p{j}",
-            )
+            model += (d[i_next][j] >= d[i][j] + lag_i.get(j, 0), f"prec_t{i}_t{i_next}_p{j}")
 
-    # ── Constraint 3 — Inter-pipeline sequencing ──────────────────────────
+    # Constraint 3 — Inter-pipeline sequencing
     for i in TACHES:
         for idx_j in range(len(PIPES) - 1):
             j      = PIPES[idx_j]
             j_next = PIPES[idx_j + 1]
-            model += (
-                d[i][j_next] >= d[i][j] + eff_dur(i, j),
-                f"seq_t{i}_p{j}_p{j_next}",
-            )
+            model += (d[i][j_next] >= d[i][j] + eff_dur(i, j), f"seq_t{i}_p{j}_p{j_next}")
 
-    # ── Constraint 4 — Resource conflicts ────────────────────────────────
+    # Constraint 4 — Resource conflicts
     for resource_name, conflict_list in CONFLITS.items():
         for (task_waiting, task_blocking) in conflict_list:
-            last_pipe = PIPES[-1]
             model += (
-                d[task_waiting][PIPES[0]] >= d[task_blocking][last_pipe] + eff_dur(task_blocking, last_pipe),
+                d[task_waiting][PIPES[0]] >= d[task_blocking][PIPES[-1]] + eff_dur(task_blocking, PIPES[-1]),
                 f"res_{resource_name}_t{task_waiting}_after_t{task_blocking}",
             )
 
@@ -97,11 +76,6 @@ def build_model(cfg: dict, name: str = "RCPSP"):
 
 
 def build_cost_expression(cfg: dict, y: dict):
-    """
-    Return (zone_cost_expr, fixed_final_cost).
-    zone_cost_expr — linear PuLP expression for cost of ONE zone.
-    Multiply by N_ZONES and add fixed_final_cost for total project cost.
-    """
     TACHES     = cfg["TACHES"]
     PIPES      = cfg["PIPES"]
     DUR        = cfg["DUR"]
@@ -123,15 +97,17 @@ def build_cost_expression(cfg: dict, y: dict):
 
 
 def read_binary(var) -> int:
-    """Safely read a binary PuLP variable (handles None)."""
     val = pulp.value(var)
     return int(round(val)) if val is not None else 0
 
 
 def extract_solution(cfg: dict, d: dict, y: dict, Cmax, model_name: str) -> dict:
     """
-    Extract a solved model into a JSON-serializable dict.
-    Call only after model.solve() returns Optimal.
+    Extract solved model to dict.
+
+    cmax_total = cmax_zone * N_ZONES + DUR_FINAL[12] + DUR_FINAL[13]
+    Matches notebook cells 10 and 12 exactly.
+    This ensures F1*, F2* bounds are consistent with the weighted objective expression.
     """
     TACHES     = cfg["TACHES"]
     PIPES      = cfg["PIPES"]
@@ -143,8 +119,10 @@ def extract_solution(cfg: dict, d: dict, y: dict, Cmax, model_name: str) -> dict
     DUR_FINAL  = cfg["DUR_FINAL"]
     COUT_FINAL = cfg["COUT_FINAL"]
 
-    cmax_zone  = pulp.value(Cmax)
-    cmax_total = cmax_zone * N_ZONES + sum(DUR_FINAL.values())
+    cmax_zone = pulp.value(Cmax)
+
+    # Notebook formula: cmax_total = cmax_zone * N_ZONES + DUR_FINAL[12] + DUR_FINAL[13]
+    cmax_total = cmax_zone * N_ZONES + DUR_FINAL.get(12, 0) + DUR_FINAL.get(13, 0)
 
     modes  = {i: {j: read_binary(y[i][j]) for j in PIPES} for i in TACHES}
     starts = {i: {j: pulp.value(d[i][j])  for j in PIPES} for i in TACHES}

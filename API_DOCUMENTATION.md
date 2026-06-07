@@ -406,11 +406,8 @@ A conflict occurs when multiple tasks require the same resource simultaneously a
   - Zone makespan and total project duration
   - Reinforcement cost across all zones
 
-#### Gantt Chart Generation
-
 - Converts solver schedule into Gantt bars with:
   - Absolute project time offsets per zone
-  - Inter-zone lag of 76 hours (INTER_ZONE_LAG)
   - Task names, pipe names, reinforcement flags
   - Final sequential tasks appended after zones
 
@@ -722,11 +719,8 @@ $$\text{eff\_dur}(i,j) = \text{DUR}[i][j] \times (1 - \text{ALPHA}[i] \times y[i
 - If reinforced (y=1): reduced duration
 - If normal (y=0): full duration
 
-### Gantt Chart
-
 - **Visual schedule** showing all tasks across all pipes and zones
-- **Time Offset**: Zone k starts at `(k-1) * (cmax_zone + INTER_ZONE_LAG)`
-- **INTER_ZONE_LAG**: 76 hours between zone starts
+- **Time Offset**: Zone k starts at `(k-1) * cmax_zone`
 
 ---
 
