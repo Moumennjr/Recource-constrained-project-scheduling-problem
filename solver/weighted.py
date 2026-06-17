@@ -129,6 +129,8 @@ def solve_weighted(cfg: dict, temps_min: float, temps_max: float,
             "cost_norm":         round(cout_norm,  4),
             "reinforced_count":  nb_renf,
             "reinforced_tasks":  reinforced_tasks,
+            "modes":             modes,
+            "starts":            starts,
         })
 
     # Deduplicate — matches notebook cell 24 exactly

@@ -183,6 +183,14 @@ def pareto(req: ParetoRequest):
         sol = result[key]
         result[key]["gantt_bars"] = build_gantt(cfg, sol["starts"], sol["modes"])
 
+    # Attach Gantt bars to each Pareto point
+    for point in result.get("pareto_points", []):
+        if "modes" in point and "starts" in point:
+            point["gantt_bars"] = build_gantt(cfg, point["starts"], point["modes"])
+            # Clean up internal fields
+            del point["modes"]
+            del point["starts"]
+
     result["config_id"]   = req.config.id
     result["config_name"] = req.config.name
     return result
@@ -215,8 +223,21 @@ def weighted(req: WeightedRequest):
         "cout_min":  f2["total_cost_da"],
         "cout_max":  f1["total_cost_da"],
     }
+    
+    # Attach Gantt bars to anchor solutions
+    f1["gantt_bars"] = build_gantt(cfg, f1["starts"], f1["modes"])
+    f2["gantt_bars"] = build_gantt(cfg, f2["starts"], f2["modes"])
     result["f1"]          = f1
     result["f2"]          = f2
+    
+    # Attach Gantt bars to each unique solution
+    for sol in result.get("unique_solutions", []):
+        if "modes" in sol and "starts" in sol:
+            sol["gantt_bars"] = build_gantt(cfg, sol["starts"], sol["modes"])
+            # Clean up internal fields
+            del sol["modes"]
+            del sol["starts"]
+    
     result["config_id"]   = req.config.id
     result["config_name"] = req.config.name
     return result
