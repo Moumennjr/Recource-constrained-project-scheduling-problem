@@ -3,3 +3,4 @@ uvicorn[standard]
 pulp
 numpy
 pydantic
+fastapi[standard]

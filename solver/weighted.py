@@ -24,6 +24,7 @@ Key rules from notebook:
 import numpy as np
 import pulp
 
+from solver.gantt import build_gantt
 from solver.model import build_model, build_cost_expression, read_binary
 
 
@@ -93,6 +94,8 @@ def solve_weighted(cfg: dict, temps_min: float, temps_max: float,
         temps_total = pulp.value(expr_temps_total)
 
         modes = {i: {j: read_binary(y[i][j]) for j in PIPES} for i in TACHES}
+        starts = {i: {j: pulp.value(d[i][j]) for j in PIPES} for i in TACHES}
+        gantt_bars = build_gantt(cfg, starts, modes)
 
         # Recompute cost from modes (matches notebook: cout_zone_ws + sum(COUT_FINAL))
         cout_zone = sum(
@@ -128,8 +131,7 @@ def solve_weighted(cfg: dict, temps_min: float, temps_max: float,
             "duration_norm":     round(temps_norm, 4),
             "cost_norm":         round(cout_norm,  4),
             "reinforced_count":  nb_renf,
-            "reinforced_tasks":  reinforced_tasks,
-        })
+            "reinforced_tasks":  reinforced_tasks,            "gantt_bars":        gantt_bars,        })
 
     # Deduplicate — matches notebook cell 24 exactly
     # key = (round(temps_total, 1), round(cout_total, 0))
